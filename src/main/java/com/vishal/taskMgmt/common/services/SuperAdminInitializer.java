@@ -30,7 +30,7 @@ public class SuperAdminInitializer implements CommandLineRunner {
                         .name("Vishal Yadav")
                         .email("taskmgmtadmin@yopmail.com")
                         .phone("8418985692")
-                        .password(passwordEncoder.encode("Test@123"))
+                        .password(passwordEncoder.encode(""))
                         .userType(UserType.SUPER_ADMIN)
                         .active(true)
                         .isInvitationSent(true)
