@@ -33,6 +33,9 @@ public class SuperAdminInitializer implements CommandLineRunner {
                         .password(passwordEncoder.encode("Test@123"))
                         .userType(UserType.SUPER_ADMIN)
                         .active(true)
+                        .isInvitationSent(true)
+                        .isPasswordChange(true)
+                        .isOnboarded(true)
                         .build();
                 userRepository.save(superAdmin);
                 System.out.println("Super Admin created successfully!");

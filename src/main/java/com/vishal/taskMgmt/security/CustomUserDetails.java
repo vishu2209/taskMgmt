@@ -8,6 +8,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import java.util.Collection;
 import java.util.Collections;
 
+@SuppressWarnings("serial")
 public class CustomUserDetails implements UserDetails {
 
     private User user;
@@ -28,10 +29,10 @@ public class CustomUserDetails implements UserDetails {
 
     @Override
     public String getUsername() {
-        return user.getEmail(); // Assuming email is used for login
+        return user.getEmail();
     }
+ 
 
-    // Other methods from UserDetails interface, you can implement or return defaults based on your needs
     @Override
     public boolean isAccountNonExpired() {
         return true;
@@ -49,10 +50,9 @@ public class CustomUserDetails implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return true; // You might want to make this dynamic based on some 'active' field in User
+        return true;
     }
 
-    // Getter for the user if needed elsewhere
     public User getUser() {
         return user;
     }
