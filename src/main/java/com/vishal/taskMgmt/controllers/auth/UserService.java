@@ -8,12 +8,16 @@ import com.vishal.taskMgmt.sharedLib.user.dto.UserDTO;
 import com.vishal.taskMgmt.sharedLib.user.dto.UserLoginDTO;
 import com.vishal.taskMgmt.sharedLib.user.entities.User;
 import com.vishal.taskMgmt.sharedLib.user.entities.UserOTP;
+import com.vishal.taskMgmt.sharedLib.user.entities.UserType;
 import com.vishal.taskMgmt.sharedLib.user.repository.UserRepository;
 
 import io.micrometer.common.util.StringUtils;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -191,8 +196,33 @@ public class UserService implements UserInterface {
 
 	@Override
 	public Page<User> getAllUsers(UserDTO userDTO) {
-		// TODO Auto-generated method stub
-		return null;
+	    // Get the currently logged-in user from the SecurityContext
+	    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+	    if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserDetails)) {
+	        throw new RuntimeException("Unauthorized: User details not found");
+	    }
+	    CustomUserDetails currentUser = (CustomUserDetails) authentication.getPrincipal();
+	    // Check if the logged-in user is SUPER_ADMIN
+	    if (!UserType.SUPER_ADMIN.equals(currentUser.getUser().getUserType())) {
+	        throw new RuntimeException("Unauthorized: Only SUPER_ADMIN can fetch all users");
+	    }
+	    // Build pagination and sorting parameters
+	    int page = userDTO.getPage() != null ? userDTO.getPage() : 0; // Default to page 0
+	    int size = userDTO.getSize() != null ? userDTO.getSize() : 10; // Default to 10 items per page
+	    String sortBy = userDTO.getSortBy() != null && !userDTO.getSortBy().isEmpty() ? userDTO.getSortBy() : "email";
+	    String sortDir = userDTO.getSortDir() != null && !userDTO.getSortDir().isEmpty() ? userDTO.getSortDir() : "asc";
+	    // Validate sortBy field to prevent invalid column names
+	    List<String> validSortFields = Arrays.asList("email", "name", "phone", "userType", "active");
+	    if (!validSortFields.contains(sortBy)) {
+	        sortBy = "email"; // Fallback to default if invalid
+	    }
+	    // Create Sort object
+	    Sort sort = Sort.by(Sort.Direction.fromString(sortDir), sortBy);
+	    Pageable pageable = PageRequest.of(page, size, sort);
+	    // Handle search
+	    String searchStr = userDTO.getSearchStr() != null ? userDTO.getSearchStr().trim() : null;
+	    // Fetch users with pagination and search
+	    return userRepository.findBySearchString(searchStr, pageable);
 	}
 
 }

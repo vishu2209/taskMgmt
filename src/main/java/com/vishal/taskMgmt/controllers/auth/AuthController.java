@@ -22,7 +22,6 @@ import java.util.function.Supplier;
 public class AuthController {
 
     private final UserService userService;
-    private final UserInterface userInterface;
 
     @PostMapping("/sendLoginOTP")
     public ResponseEntity<Map<String, Object>> sendLoginOTP(@Valid @RequestBody UserLoginDTO userLoginDTO) {
@@ -79,8 +78,17 @@ public class AuthController {
     @GetMapping("/GetAllUsers")
     public ResponseEntity<Map<String, Object>> getAllUsers(@Valid @RequestBody UserDTO userDTO) {
         return handleRequest(() -> {
-            Page<User> users = userInterface.getAllUsers(userDTO);
-            return Map.of("data", users);
+            Page<User> users = userService.getAllUsers(userDTO);
+            return Map.of(
+                "data", users.getContent(), // List of users
+                "totalElements", users.getTotalElements(), // Total number of users
+                "totalPages", users.getTotalPages(), // Total pages
+                "currentPage", users.getNumber(), // Current page number
+                "pageSize", users.getSize(), // Items per page
+                "sortBy", userDTO.getSortBy() != null ? userDTO.getSortBy() : "email",
+                "sortDir", userDTO.getSortDir() != null ? userDTO.getSortDir() : "asc",
+                "searchStr", userDTO.getSearchStr() != null ? userDTO.getSearchStr() : ""
+            );
         }, HttpStatus.BAD_REQUEST);
     }
 
