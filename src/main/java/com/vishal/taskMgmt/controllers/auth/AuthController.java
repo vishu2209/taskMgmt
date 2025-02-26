@@ -3,7 +3,7 @@ package com.vishal.taskMgmt.controllers.auth;
 import com.vishal.taskMgmt.sharedLib.user.dto.AddUsersDTO;
 import com.vishal.taskMgmt.sharedLib.user.dto.UserDTO;
 import com.vishal.taskMgmt.sharedLib.user.dto.UserLoginDTO;
-import com.vishal.taskMgmt.sharedLib.user.entities.User;
+import com.vishal.taskMgmt.sharedLib.user.dto.UserResponseDTO;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -76,18 +76,33 @@ public class AuthController {
     }
 
     @GetMapping("/GetAllUsers")
-    public ResponseEntity<Map<String, Object>> getAllUsers(@Valid @RequestBody UserDTO userDTO) {
+    public ResponseEntity<Map<String, Object>> getAllUsers(
+            @RequestParam(required = false, defaultValue = "0") Integer page,
+            @RequestParam(required = false, defaultValue = "10") Integer size,
+            @RequestParam(required = false, defaultValue = "email") String sortBy,
+            @RequestParam(required = false, defaultValue = "asc") String sortDir,
+            @RequestParam(required = false) String searchStr) {
+        // Build UserDTO from query parameters
+        UserDTO userDTO = UserDTO.builder()
+            .userId("super-admin-id") // Replace with actual logic if needed
+            .page(page)
+            .size(size)
+            .sortBy(sortBy)
+            .sortDir(sortDir)
+            .searchStr(searchStr)
+            .build();
+
         return handleRequest(() -> {
-            Page<User> users = userService.getAllUsers(userDTO);
+            Page<UserResponseDTO> users = userService.getAllUsers(userDTO);
             return Map.of(
-                "data", users.getContent(), // List of users
-                "totalElements", users.getTotalElements(), // Total number of users
-                "totalPages", users.getTotalPages(), // Total pages
-                "currentPage", users.getNumber(), // Current page number
-                "pageSize", users.getSize(), // Items per page
-                "sortBy", userDTO.getSortBy() != null ? userDTO.getSortBy() : "email",
-                "sortDir", userDTO.getSortDir() != null ? userDTO.getSortDir() : "asc",
-                "searchStr", userDTO.getSearchStr() != null ? userDTO.getSearchStr() : ""
+                "data", users.getContent(),
+                "totalElements", users.getTotalElements(),
+                "totalPages", users.getTotalPages(),
+                "currentPage", users.getNumber(),
+                "pageSize", users.getSize(),
+                "sortBy", sortBy,
+                "sortDir", sortDir,
+                "searchStr", searchStr != null ? searchStr : ""
             );
         }, HttpStatus.BAD_REQUEST);
     }

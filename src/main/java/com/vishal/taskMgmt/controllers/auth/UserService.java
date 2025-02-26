@@ -6,6 +6,7 @@ import com.vishal.taskMgmt.security.JwtUtil;
 import com.vishal.taskMgmt.sharedLib.user.dto.AddUsersDTO;
 import com.vishal.taskMgmt.sharedLib.user.dto.UserDTO;
 import com.vishal.taskMgmt.sharedLib.user.dto.UserLoginDTO;
+import com.vishal.taskMgmt.sharedLib.user.dto.UserResponseDTO;
 import com.vishal.taskMgmt.sharedLib.user.entities.User;
 import com.vishal.taskMgmt.sharedLib.user.entities.UserOTP;
 import com.vishal.taskMgmt.sharedLib.user.entities.UserType;
@@ -195,7 +196,7 @@ public class UserService implements UserInterface {
 	}
 
 	@Override
-	public Page<User> getAllUsers(UserDTO userDTO) {
+	public Page<UserResponseDTO> getAllUsers(UserDTO userDTO) {
 	    // Get the currently logged-in user from the SecurityContext
 	    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 	    if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserDetails)) {
@@ -207,22 +208,29 @@ public class UserService implements UserInterface {
 	        throw new RuntimeException("Unauthorized: Only SUPER_ADMIN can fetch all users");
 	    }
 	    // Build pagination and sorting parameters
-	    int page = userDTO.getPage() != null ? userDTO.getPage() : 0; // Default to page 0
-	    int size = userDTO.getSize() != null ? userDTO.getSize() : 10; // Default to 10 items per page
+	    int page = userDTO.getPage() != null ? userDTO.getPage() : 0;
+	    int size = userDTO.getSize() != null ? userDTO.getSize() : 10;
 	    String sortBy = userDTO.getSortBy() != null && !userDTO.getSortBy().isEmpty() ? userDTO.getSortBy() : "email";
 	    String sortDir = userDTO.getSortDir() != null && !userDTO.getSortDir().isEmpty() ? userDTO.getSortDir() : "asc";
-	    // Validate sortBy field to prevent invalid column names
+	    // Validate sortBy field
 	    List<String> validSortFields = Arrays.asList("email", "name", "phone", "userType", "active");
 	    if (!validSortFields.contains(sortBy)) {
-	        sortBy = "email"; // Fallback to default if invalid
+	        sortBy = "email"; // Fallback to default
 	    }
-	    // Create Sort object
+	    // Create Sort and Pageable objects
 	    Sort sort = Sort.by(Sort.Direction.fromString(sortDir), sortBy);
 	    Pageable pageable = PageRequest.of(page, size, sort);
 	    // Handle search
 	    String searchStr = userDTO.getSearchStr() != null ? userDTO.getSearchStr().trim() : null;
-	    // Fetch users with pagination and search
-	    return userRepository.findBySearchString(searchStr, pageable);
+	    // Fetch users and map to UserResponseDTO
+	    return userRepository.findBySearchString(searchStr, pageable)
+	        .map(user -> UserResponseDTO.builder()
+	            .userId(user.getId())
+	            .name(user.getName())
+	            .email(user.getEmail())
+	            .phone(user.getPhone())
+	            .userType(user.getUserType())
+	            .active(user.isActive())
+	            .build());
 	}
-
 }
