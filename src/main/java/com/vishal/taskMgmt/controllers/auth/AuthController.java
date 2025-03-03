@@ -1,12 +1,10 @@
 package com.vishal.taskMgmt.controllers.auth;
 
-import com.vishal.taskMgmt.sharedLib.user.dto.AddUsersDTO;
-import com.vishal.taskMgmt.sharedLib.user.dto.UserDTO;
-import com.vishal.taskMgmt.sharedLib.user.dto.UserLoginDTO;
-import com.vishal.taskMgmt.sharedLib.user.dto.UserResponseDTO;
-
+import com.vishal.taskMgmt.sharedLib.user.dto.*;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -21,6 +19,7 @@ import java.util.function.Supplier;
 @RequiredArgsConstructor
 public class AuthController {
 
+	@Autowired
     private final UserService userService;
 
     @PostMapping("/sendLoginOTP")
@@ -48,6 +47,11 @@ public class AuthController {
     @PostMapping("/addUsers")
     public ResponseEntity<Map<String, Object>> addUsers(@Valid @RequestBody AddUsersDTO addUsersDTO) {
         return handleRequest(() -> userService.addUsersDTO(addUsersDTO), HttpStatus.BAD_REQUEST);
+    }
+
+    @PostMapping("/addOrganization")
+    public ResponseEntity<Map<String, Object>> addOrganization(@Valid @RequestBody AddOrganizationDTO addOrgDTO) {
+        return handleRequest(() -> userService.addOrganization(addOrgDTO), HttpStatus.BAD_REQUEST);
     }
 
     @PostMapping("/sendPasswordSetupOTP")
@@ -82,9 +86,7 @@ public class AuthController {
             @RequestParam(required = false, defaultValue = "email") String sortBy,
             @RequestParam(required = false, defaultValue = "asc") String sortDir,
             @RequestParam(required = false) String searchStr) {
-        // Build UserDTO from query parameters
         UserDTO userDTO = UserDTO.builder()
-            .userId("super-admin-id") // Replace with actual logic if needed
             .page(page)
             .size(size)
             .sortBy(sortBy)
@@ -107,7 +109,6 @@ public class AuthController {
         }, HttpStatus.BAD_REQUEST);
     }
 
-    // Helper method to handle common response pattern
     private ResponseEntity<Map<String, Object>> handleRequest(
             Supplier<Map<String, Object>> serviceCall,
             HttpStatus errorStatus) {
@@ -115,18 +116,17 @@ public class AuthController {
             return ResponseEntity.ok(serviceCall.get());
         } catch (RuntimeException e) {
             return ResponseEntity.status(errorStatus)
-                    .body(Map.of("error", e.getMessage()));
+                .body(Map.of("error", e.getMessage()));
         }
     }
 
-    // Optional: Custom exception handler for validation errors
     @ExceptionHandler(jakarta.validation.ConstraintViolationException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(jakarta.validation.ConstraintViolationException ex) {
         Map<String, Object> errorResponse = Map.of(
-                "error", "Validation failed",
-                "details", ex.getConstraintViolations().stream()
-                        .map(cv -> cv.getPropertyPath() + ": " + cv.getMessage())
-                        .toList()
+            "error", "Validation failed",
+            "details", ex.getConstraintViolations().stream()
+                .map(cv -> cv.getPropertyPath() + ": " + cv.getMessage())
+                .toList()
         );
         return ResponseEntity.badRequest().body(errorResponse);
     }
