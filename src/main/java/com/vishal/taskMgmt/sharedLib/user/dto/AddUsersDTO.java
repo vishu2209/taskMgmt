@@ -29,4 +29,6 @@ public class AddUsersDTO {
 	String email;
 	
 	UserType userType;
+	
+	String  orgId;
 }

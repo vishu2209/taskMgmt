@@ -10,9 +10,7 @@ import com.vishal.taskMgmt.sharedLib.user.entities.UserOTP;
 import com.vishal.taskMgmt.sharedLib.user.entities.UserType;
 import com.vishal.taskMgmt.sharedLib.user.repository.OrganizationRepository;
 import com.vishal.taskMgmt.sharedLib.user.repository.UserRepository;
-import io.micrometer.common.util.StringUtils;
-import jakarta.validation.Valid;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -22,300 +20,220 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 
 @Service
+@RequiredArgsConstructor
 public class UserService implements UserInterface {
 
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
+    private final OrganizationRepository organizationRepository;
+    private final OtpService otpService;
+    private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
 
-    @Autowired
-    private OrganizationRepository organizationRepository;
-
-    @Autowired
-    private OtpService otpService;
-
-    @Autowired
-    private JwtUtil jwtUtil;
-
-    @Autowired
-    private PasswordEncoder passwordEncoder;
-
-    public Map<String, Object> sendLoginOTP(UserLoginDTO userLoginDTO) throws Exception {
-        Optional<User> userOptional = userRepository.findByEmailIgnoreCase(userLoginDTO.getEmail().trim());
-        if (userOptional.isPresent()) {
-            User user = userOptional.get();
-            if (user.isActive()) {
-                boolean isPasswordMatches = passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword());
-                if (isPasswordMatches) {
-                    String otp = otpService.saveOtp(user, "EMAIL");
-                    userLoginDTO.setOtp(otp);
-                    Map<String, Object> response = new HashMap<>();
-                    response.put("message", "OTP sent successfully");
-                    response.put("email", user.getEmail());
-                    response.put("otp", otp); // For testing; remove in production
-                    return response;
-                } else {
-                    throw new Exception("Invalid password");
-                }
-            } else {
-                throw new Exception("User account is not active");
-            }
-        } else {
-            throw new Exception("Invalid email");
+    public OtpResponseDTO sendLoginOtp(UserLoginDTO userLoginDTO) {
+        User user = userRepository.findByEmailIgnoreCase(userLoginDTO.getEmail().trim())
+                .orElseThrow(() -> new IllegalArgumentException("Invalid email"));
+        if (!user.isActive()) {
+            throw new IllegalStateException("User account is not active");
         }
+        if (!passwordEncoder.matches(userLoginDTO.getPassword(), user.getPassword())) {
+            throw new IllegalArgumentException("Invalid password");
+        }
+        String otp = otpService.saveOtp(user, "EMAIL");
+        return new OtpResponseDTO("OTP sent successfully", user.getEmail(),otp);
     }
 
-    public Map<String, Object> authenticateUser(UserLoginDTO loginDTO) throws Exception {
-        Optional<User> userOptional = userRepository.findByEmailIgnoreCaseAndActiveTrue(loginDTO.getEmail().trim());
-        if (userOptional.isEmpty()) {
-            throw new Exception("Invalid email or user not active");
-        }
-        User user = userOptional.get();
+    public UserLoginResponseDTO authenticateUser(UserLoginDTO loginDTO) {
+        User user = userRepository.findByEmailIgnoreCaseAndActiveTrue(loginDTO.getEmail().trim())
+                .orElseThrow(() -> new IllegalArgumentException("Invalid email or user not active"));
         if (!passwordEncoder.matches(loginDTO.getPassword(), user.getPassword())) {
-            throw new Exception("Invalid password");
+            throw new IllegalArgumentException("Invalid password");
         }
-        UserOTP userOTP = otpService.getUserOTP(user.getId(), loginDTO.getOtp(), "EMAIL");
-        if (userOTP == null) {
-            throw new Exception("Invalid OTP");
-        }
+        UserOTP userOTP = Optional.ofNullable(otpService.getUserOTP(user.getId(), loginDTO.getOtp(), "EMAIL"))
+                .orElseThrow(() -> new IllegalArgumentException("Invalid OTP"));
         if (LocalDateTime.now().isAfter(userOTP.getExpiredAt())) {
-            throw new Exception("OTP has expired");
+            throw new IllegalStateException("OTP has expired");
         }
         CustomUserDetails userDetails = new CustomUserDetails(user);
         String token = jwtUtil.generateToken(userDetails);
         otpService.deleteOTPAfterUse(userOTP.getId());
-        UserLoginResponseDTO userLoginResponseDTO = UserLoginResponseDTO.builder()
-            .userId(user.getId())
-            .name(user.getName())
-            .email(user.getEmail())
-            .phone(user.getPhone())
-            .userType(user.getUserType())
-            .active(user.isActive())
-            .accessToken(token)
-            .build();
-        return Map.of("user", userLoginResponseDTO);
-    }
-
-    @Transactional
-    public Map<String, Object> addUsersDTO(@Valid AddUsersDTO addUsersDTO) {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserDetails)) {
-            throw new RuntimeException("Unauthorized: User details not found");
-        }
-        
-        CustomUserDetails currentUser = (CustomUserDetails) authentication.getPrincipal();
-        UserType currentUserType = currentUser.getUser().getUserType();
-        
-        // Check if user is either SUPER_ADMIN or ORG_ADMIN
-        if (!UserType.SUPER_ADMIN.equals(currentUserType) && !UserType.ORG_ADMIN.equals(currentUserType)) {
-            throw new RuntimeException("Unauthorized: Only SUPER_ADMIN or ORG_ADMIN can add users");
-        }
-        
-        if (addUsersDTO != null) {
-            // Validate that only ORG_EMPLOYEE or ORG_USER can be added
-            if (!UserType.ORG_EMPLOYEE.equals(addUsersDTO.getUserType()) && 
-                !UserType.ORG_USER.equals(addUsersDTO.getUserType())) {
-                throw new RuntimeException("Unauthorized: Can only add ORG_EMPLOYEE or ORG_USER");
-            }
-            
-            // Check for duplicate email
-            List<User> duplicateUsers = userRepository
-                .findByEmailIgnoreCaseAndIdAndActiveTrue(addUsersDTO.getEmail().trim(), addUsersDTO.getId());
-            if (!CollectionUtils.isEmpty(duplicateUsers)) {
-                throw new RuntimeException("User with this email already exists");
-            }
-            
-            User user;
-            Organization organization = null;
-            
-            // Get current user's organization for ORG_ADMIN
-            if (UserType.ORG_ADMIN.equals(currentUserType)) {
-                organization = currentUser.getUser().getOrganization();
-                if (organization == null) {
-                    throw new RuntimeException("ORG_ADMIN must be associated with an organization");
-                }
-            }
-            
-            if (StringUtils.isNotEmpty(addUsersDTO.getId())) {
-                // Update existing user
-                Optional<User> existingUserOptional = userRepository.findById(addUsersDTO.getId());
-                if (existingUserOptional.isPresent()) {
-                    user = existingUserOptional.get();
-                    // Verify the existing user is ORG_EMPLOYEE or ORG_USER
-                    if (!UserType.ORG_EMPLOYEE.equals(user.getUserType()) && 
-                        !UserType.ORG_USER.equals(user.getUserType())) {
-                        throw new RuntimeException("Unauthorized: Can only modify ORG_EMPLOYEE or ORG_USER");
-                    }
-                    // For ORG_ADMIN, ensure the user belongs to their organization
-                    if (UserType.ORG_ADMIN.equals(currentUserType) && 
-                        !organization.getId().equals(user.getOrganization().getId())) {
-                        throw new RuntimeException("Unauthorized: ORG_ADMIN can only modify users in their own organization");
-                    }
-                    user.setName(addUsersDTO.getName());
-                    user.setEmail(addUsersDTO.getEmail().trim());
-                    user.setPhone(addUsersDTO.getPhone());
-                    user.setUserType(addUsersDTO.getUserType());
-                } else {
-                    throw new RuntimeException("User not found for update");
-                }
-            } else {
-                // Create new user
-                user = new User();
-                user.setName(addUsersDTO.getName());
-                user.setEmail(addUsersDTO.getEmail().trim());
-                user.setPhone(addUsersDTO.getPhone());
-                user.setUserType(addUsersDTO.getUserType());
-                user.setActive(true);
-                user.setInvitationSent(true);
-                user.setPasswordChange(false);
-                
-                // Set organization
-                if (UserType.ORG_ADMIN.equals(currentUserType)) {
-                    // ORG_ADMIN can only add to their own organization
-                    user.setOrganization(organization);
-                } else if (UserType.SUPER_ADMIN.equals(currentUserType)) {
-                    // SUPER_ADMIN can add without organization or modify AddUsersDTO to include organizationId
-                    user.setOrganization(null); // Or implement organization selection logic
-                }
-            }
-            
-            userRepository.save(user);
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "User added successfully");
-            response.put("userId", user.getId());
-            if (user.getOrganization() != null) {
-                response.put("organizationId", user.getOrganization().getId());
-            }
-            return response;
-        } else {
-            throw new RuntimeException("Invalid input: No fields should be empty");
-        }
-    }
-
-    public Map<String, Object> sendPasswordSetupOTP(String email) throws Exception {
-        Optional<User> userOptional = userRepository.findByEmailIgnoreCase(email.trim());
-        if (userOptional.isEmpty()) {
-            throw new Exception("User with this email does not exist");
-        }
-        User user = userOptional.get();
-        if (!user.isActive()) {
-            throw new Exception("User account is not active");
-        }
-        String otp = otpService.saveOtp(user, "EMAIL");
-        Map<String, Object> response = new HashMap<>();
-        response.put("message", "OTP sent successfully for password setup");
-        response.put("email", user.getEmail());
-        response.put("otp", otp); // For testing; remove in production
-        return response;
-    }
-
-    public Map<String, Object> setPassword(String email, String otp, String newPassword) throws Exception {
-        Optional<User> userOptional = userRepository.findByEmailIgnoreCase(email.trim());
-        if (userOptional.isEmpty()) {
-            throw new Exception("User with this email does not exist");
-        }
-        User user = userOptional.get();
-        if (!user.isActive()) {
-            throw new Exception("User account is not active");
-        }
-        UserOTP userOTP = otpService.getUserOTP(user.getId(), otp, "EMAIL");
-        if (userOTP == null) {
-            throw new Exception("Invalid OTP");
-        }
-        if (LocalDateTime.now().isAfter(userOTP.getExpiredAt())) {
-            throw new Exception("OTP has expired");
-        }
-        user.setPassword(passwordEncoder.encode(newPassword));
-        user.setPasswordChange(true);
-        userRepository.save(user);
-        otpService.deleteOTPAfterUse(userOTP.getId());
-        return Map.of("message", "Password set successfully");
-    }
-
-    @Override
-    public Page<UserResponseDTO> getAllUsers(UserDTO userDTO) {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserDetails)) {
-            throw new RuntimeException("Unauthorized: User details not found");
-        }
-        CustomUserDetails currentUser = (CustomUserDetails) authentication.getPrincipal();
-        if (!UserType.SUPER_ADMIN.equals(currentUser.getUser().getUserType())) {
-            throw new RuntimeException("Unauthorized: Only SUPER_ADMIN can fetch all users");
-        }
-        int page = userDTO.getPage() != null ? userDTO.getPage() : 0;
-        int size = userDTO.getSize() != null ? userDTO.getSize() : 10;
-        String sortBy = userDTO.getSortBy() != null && !userDTO.getSortBy().isEmpty() ? userDTO.getSortBy() : "email";
-        String sortDir = userDTO.getSortDir() != null && !userDTO.getSortDir().isEmpty() ? userDTO.getSortDir() : "asc";
-        List<String> validSortFields = Arrays.asList("email", "name", "phone", "userType", "active");
-        if (!validSortFields.contains(sortBy)) {
-            sortBy = "email";
-        }
-        Sort sort = Sort.by(Sort.Direction.fromString(sortDir), sortBy);
-        Pageable pageable = PageRequest.of(page, size, sort);
-        String searchStr = userDTO.getSearchStr() != null ? userDTO.getSearchStr().trim() : null;
-        return userRepository.findBySearchString(searchStr, pageable)
-            .map(user -> UserResponseDTO.builder()
+        return UserLoginResponseDTO.builder()
                 .userId(user.getId())
                 .name(user.getName())
                 .email(user.getEmail())
                 .phone(user.getPhone())
                 .userType(user.getUserType())
                 .active(user.isActive())
-                .build());
+                .accessToken(token)
+                .build();
+    }
+
+    //kjhkjfe
+    
+    @Transactional
+    public UserCreationResponseDTO addUsers(AddUsersDTO addUsersDTO) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        CustomUserDetails currentUser = (CustomUserDetails) auth.getPrincipal();
+        UserType currentUserType = currentUser.getUser().getUserType();
+
+        if (!List.of(UserType.SUPER_ADMIN, UserType.ORG_ADMIN).contains(currentUserType)) {
+            throw new SecurityException("Unauthorized: Only SUPER_ADMIN or ORG_ADMIN can add users");
+        }
+
+        if (!List.of(UserType.ORG_EMPLOYEE, UserType.ORG_USER).contains(addUsersDTO.getUserType())) {
+            throw new IllegalArgumentException("Unauthorized: Can only add ORG_EMPLOYEE or ORG_USER");
+        }
+
+        if (!userRepository.findByEmailIgnoreCaseAndIdNot(addUsersDTO.getEmail().trim(), addUsersDTO.getId()).isEmpty()) {
+            throw new IllegalArgumentException("User with this email already exists");
+        }
+
+        User user;
+        Organization organization = null;
+
+        // Handle organization assignment based on user type
+        if (UserType.ORG_ADMIN.equals(currentUserType)) {
+            organization = currentUser.getUser().getOrganization();
+            if (organization == null) {
+                throw new IllegalStateException("ORG_ADMIN must be associated with an organization");
+            }
+        } else if (UserType.SUPER_ADMIN.equals(currentUserType)) {
+            if (addUsersDTO.getOrgId() == null || addUsersDTO.getOrgId().isBlank()) {
+                throw new IllegalArgumentException("Organization ID is required when SUPER_ADMIN adds ORG_EMPLOYEE or ORG_USER");
+            }
+            organization = organizationRepository.findById(addUsersDTO.getOrgId())
+                    .orElseThrow(() -> new IllegalArgumentException("Organization not found with ID: " + addUsersDTO.getOrgId()));
+        }
+
+        if (addUsersDTO.getId() != null) {
+            // Update existing user
+            user = userRepository.findById(addUsersDTO.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("User not found for update"));
+            if (!List.of(UserType.ORG_EMPLOYEE, UserType.ORG_USER).contains(user.getUserType())) {
+                throw new SecurityException("Unauthorized: Can only modify ORG_EMPLOYEE or ORG_USER");
+            }
+            if (UserType.ORG_ADMIN.equals(currentUserType) && !organization.getId().equals(user.getOrganization().getId())) {
+                throw new SecurityException("Unauthorized: ORG_ADMIN can only modify users in their own organization");
+            }
+            // For SUPER_ADMIN, allow updating orgId if provided
+            if (UserType.SUPER_ADMIN.equals(currentUserType) && addUsersDTO.getOrgId() != null && !addUsersDTO.getOrgId().isBlank()) {
+                user.setOrganization(organization);
+            }
+        } else {
+            // Create new user
+            user = User.builder()
+                    .active(true)
+                    .isInvitationSent(true)
+                    .isPasswordChange(false)
+                    .isOnboarded(false)
+                    .organization(organization) // Always set organization (non-null for ORG_USER/ORG_EMPLOYEE)
+                    .build();
+        }
+
+        user.setName(addUsersDTO.getName());
+        user.setEmail(addUsersDTO.getEmail().trim());
+        user.setPhone(addUsersDTO.getPhone());
+        user.setUserType(addUsersDTO.getUserType());
+        userRepository.save(user);
+
+        return new UserCreationResponseDTO("User added successfully", user.getId(), user.getOrganization().getId());
+    }
+
+    public OtpResponseDTO sendPasswordSetupOtp(String email) {
+        User user = userRepository.findByEmailIgnoreCase(email.trim())
+                .orElseThrow(() -> new IllegalArgumentException("User with this email does not exist"));
+        if (!user.isActive()) {
+            throw new IllegalStateException("User account is not active");
+        }
+        String otp = otpService.saveOtp(user, "EMAIL");
+        return new OtpResponseDTO("OTP sent successfully for password setup", user.getEmail(),otp);
+    }
+
+    public GenericResponseDTO setPassword(String email, String otp, String newPassword) {
+        User user = userRepository.findByEmailIgnoreCase(email.trim())
+                .orElseThrow(() -> new IllegalArgumentException("User with this email does not exist"));
+        if (!user.isActive()) {
+            throw new IllegalStateException("User account is not active");
+        }
+        UserOTP userOTP = Optional.ofNullable(otpService.getUserOTP(user.getId(), otp, "EMAIL"))
+                .orElseThrow(() -> new IllegalArgumentException("Invalid OTP"));
+        if (LocalDateTime.now().isAfter(userOTP.getExpiredAt())) {
+            throw new IllegalStateException("OTP has expired");
+        }
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setPasswordChange(true);
+        userRepository.save(user);
+        otpService.deleteOTPAfterUse(userOTP.getId());
+        return new GenericResponseDTO("Password set successfully");
+    }
+
+    @Override
+    public Page<UserResponseDTO> getAllUsers(UserSearchDTO searchDTO) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        CustomUserDetails currentUser = (CustomUserDetails) auth.getPrincipal();
+        if (!UserType.SUPER_ADMIN.equals(currentUser.getUser().getUserType())) {
+            throw new SecurityException("Unauthorized: Only SUPER_ADMIN can fetch all users");
+        }
+        int page = searchDTO.getPage() != null ? searchDTO.getPage() : 0;
+        int size = searchDTO.getSize() != null ? searchDTO.getSize() : 10;
+        String sortBy = searchDTO.getSortBy() != null && !searchDTO.getSortBy().isEmpty() ? searchDTO.getSortBy() : "email";
+        String sortDir = searchDTO.getSortDir() != null && !searchDTO.getSortDir().isEmpty() ? searchDTO.getSortDir() : "asc";
+        List<String> validSortFields = Arrays.asList("email", "name", "phone", "userType", "active");
+        if (!validSortFields.contains(sortBy)) {
+            sortBy = "email";
+        }
+        Sort sort = Sort.by(Sort.Direction.fromString(sortDir), sortBy);
+        Pageable pageable = PageRequest.of(page, size, sort);
+        String searchStr = searchDTO.getSearchStr() != null ? searchDTO.getSearchStr().trim() : null;
+        return userRepository.findBySearchString(searchStr, pageable)
+                .map(user -> UserResponseDTO.builder()
+                        .userId(user.getId())
+                        .name(user.getName())
+                        .email(user.getEmail())
+                        .phone(user.getPhone())
+                        .userType(user.getUserType())
+                        .active(user.isActive())
+                        .build());
     }
 
     @Transactional
-    public Map<String, Object> addOrganization(AddOrganizationDTO addOrgDTO) {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !(authentication.getPrincipal() instanceof CustomUserDetails)) {
-            throw new RuntimeException("Unauthorized: User details not found");
-        }
-        CustomUserDetails currentUser = (CustomUserDetails) authentication.getPrincipal();
+    public OrganizationCreationResponseDTO addOrganization(AddOrganizationDTO addOrgDTO) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        CustomUserDetails currentUser = (CustomUserDetails) auth.getPrincipal();
         if (!UserType.SUPER_ADMIN.equals(currentUser.getUser().getUserType())) {
-            throw new RuntimeException("Unauthorized: Only SUPER_ADMIN can add organizations");
+            throw new SecurityException("Unauthorized: Only SUPER_ADMIN can add organizations");
         }
-
-        Optional<Organization> existingOrg = organizationRepository.findByOrgEmail(addOrgDTO.getOrgEmail().trim());
-        if (existingOrg.isPresent()) {
-            throw new RuntimeException("Organization with this email already exists");
+        if (organizationRepository.findByOrgEmail(addOrgDTO.getOrgEmail().trim()).isPresent()) {
+            throw new IllegalArgumentException("Organization with this email already exists");
         }
-
-        Optional<User> existingAdmin = userRepository.findByEmailIgnoreCase(addOrgDTO.getAdminEmail().trim());
-        if (existingAdmin.isPresent()) {
-            throw new RuntimeException("Admin with this email already exists");
+        if (userRepository.findByEmailIgnoreCase(addOrgDTO.getAdminEmail().trim()).isPresent()) {
+            throw new IllegalArgumentException("Admin with this email already exists");
         }
-
         Organization organization = Organization.builder()
-            .orgName(addOrgDTO.getOrgName())
-            .orgEmail(addOrgDTO.getOrgEmail().trim())
-            .orgContacts(addOrgDTO.getOrgContacts())
-            .build();
-
+                .orgName(addOrgDTO.getOrgName())
+                .orgEmail(addOrgDTO.getOrgEmail().trim())
+                .orgContacts(addOrgDTO.getOrgContacts())
+                .build();
         User orgAdmin = User.builder()
-            .name(addOrgDTO.getAdminName())
-            .email(addOrgDTO.getAdminEmail().trim())
-            .phone(addOrgDTO.getAdminPhone())
-            .userType(UserType.ORG_ADMIN)
-            .active(true)
-            .isInvitationSent(true)
-            .isPasswordChange(false)
-            .organization(organization)
-            .build();
-
+                .name(addOrgDTO.getAdminName())
+                .email(addOrgDTO.getAdminEmail().trim())
+                .phone(addOrgDTO.getAdminPhone())
+                .userType(UserType.ORG_ADMIN)
+                .active(true)
+                .isInvitationSent(true)
+                .isPasswordChange(false)
+                .isOnboarded(false)
+                .organization(organization)
+                .build();
         organization.setOrgAdmin(orgAdmin);
-
         organizationRepository.save(organization);
         userRepository.save(orgAdmin);
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("message", "Organization and admin added successfully");
-        response.put("orgId", organization.getId());
-        response.put("adminId", orgAdmin.getId());
-        return response;
+        return new OrganizationCreationResponseDTO("Organization and admin added successfully", organization.getId(), orgAdmin.getId());
     }
 }

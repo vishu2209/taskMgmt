@@ -11,7 +11,7 @@ import java.util.Collections;
 @SuppressWarnings("serial")
 public class CustomUserDetails implements UserDetails {
 
-    private User user;
+    private final User user;
 
     public CustomUserDetails(User user) {
         this.user = user;
@@ -31,7 +31,6 @@ public class CustomUserDetails implements UserDetails {
     public String getUsername() {
         return user.getEmail();
     }
- 
 
     @Override
     public boolean isAccountNonExpired() {
@@ -50,7 +49,7 @@ public class CustomUserDetails implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return true;
+        return user.isActive();
     }
 
     public User getUser() {

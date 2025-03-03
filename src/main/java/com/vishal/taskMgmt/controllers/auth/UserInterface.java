@@ -1,12 +1,14 @@
 package com.vishal.taskMgmt.controllers.auth;
 
+import com.vishal.taskMgmt.sharedLib.user.dto.*;
 import org.springframework.data.domain.Page;
 
-import com.vishal.taskMgmt.sharedLib.user.dto.UserDTO;
-import com.vishal.taskMgmt.sharedLib.user.dto.UserResponseDTO;
-
 public interface UserInterface {
-	
-	Page<UserResponseDTO> getAllUsers(UserDTO userDTO);
-
+    OtpResponseDTO sendLoginOtp(UserLoginDTO userLoginDTO);
+    UserLoginResponseDTO authenticateUser(UserLoginDTO loginDTO);
+    UserCreationResponseDTO addUsers(AddUsersDTO addUsersDTO);
+    OrganizationCreationResponseDTO addOrganization(AddOrganizationDTO addOrgDTO);
+    OtpResponseDTO sendPasswordSetupOtp(String email);
+    GenericResponseDTO setPassword(String email, String otp, String newPassword);
+    Page<UserResponseDTO> getAllUsers(UserSearchDTO searchDTO);
 }
